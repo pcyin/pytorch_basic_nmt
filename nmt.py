@@ -317,7 +317,7 @@ class NMT(nn.Module):
         torch.save(params, path)
 
 
-def evaluate_ppl(model, dev_data, loss_fn, batch_size=32):
+def evaluate_ppl(model, dev_data, batch_size=32):
     was_training = model.training
     model.eval()
 
@@ -372,7 +372,7 @@ def train(args: Dict[str, str]):
                 hidden_size=int(args['--hidden-size']),
                 dropout_rate=float(args['--dropout']),
                 vocab=vocab)
-    model.eval()
+    model.train()
 
     uniform_init = float(args['--uniform-init'])
     print('uniformly initialize parameters [-%f, +%f]' % (uniform_init, uniform_init), file=sys.stderr)
@@ -381,13 +381,11 @@ def train(args: Dict[str, str]):
 
     vocab_mask = torch.ones(len(vocab.tgt))
     vocab_mask[vocab.tgt['<pad>']] = 0
-    cross_entropy_loss = nn.CrossEntropyLoss(weight=vocab_mask, reduction='sum')
 
     device = torch.device("cuda:0" if args['--cuda'] else "cpu")
     print('use device: %s' % device, file=sys.stderr)
 
     model = model.to(device)
-    cross_entropy_loss = cross_entropy_loss.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(args['--lr']))
 
@@ -445,17 +443,17 @@ def train(args: Dict[str, str]):
             # perform validation
             if train_iter % valid_niter == 0:
                 print('epoch %d, iter %d, cum. loss %.2f, cum. ppl %.2f cum. examples %d' % (epoch, train_iter,
-                                                                                         cum_loss / cum_batches,
+                                                                                         cum_loss / cum_examples,
                                                                                          np.exp(cum_loss / cum_tgt_words),
                                                                                          cum_examples), file=sys.stderr)
 
-                cum_loss = cum_batches = cum_tgt_words = 0.
+                cum_loss = cum_examples = cum_tgt_words = 0.
                 valid_num += 1
 
                 print('begin validation ...', file=sys.stderr)
 
                 # compute dev. ppl and bleu
-                dev_ppl = evaluate_ppl(model, dev_data, cross_entropy_loss)
+                dev_ppl = evaluate_ppl(model, dev_data, batch_size=128)   # dev batch size can be a bit larger
                 valid_metric = -dev_ppl
 
                 print('validation: iter %d, dev. ppl %f' % (train_iter, dev_ppl), file=sys.stderr)
