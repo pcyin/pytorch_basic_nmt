@@ -114,6 +114,7 @@ class NMT(nn.Module):
         # (tgt_sent_len - 1, batch_size, tgt_vocab_size)
         tgt_words_log_prob = F.log_softmax(self.readout(att_vecs), dim=-1)
 
+        # (tgt_sent_len, batch_size)
         tgt_words_mask = (tgt_sents_var != self.vocab.tgt['<pad>']).float()
 
         # (tgt_sent_len - 1, batch_size)
