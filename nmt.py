@@ -31,7 +31,7 @@ Options:
     --uniform-init=<float>                  uniformly initialize all parameters [default: 0.1]
     --save-to=<file>                        model save path [default: model.bin]
     --valid-niter=<int>                     perform validation after how many iterations [default: 2000]
-    --dropout=<float>                       dropout [default: 0.3]
+    --dropout=<float>                       dropout [default: 0.2]
     --max-decoding-time-step=<int>          maximum number of decoding time steps [default: 70]
 """
 
@@ -459,13 +459,7 @@ def train(args: Dict[str, str]):
                 print('validation: iter %d, dev. ppl %f' % (train_iter, dev_ppl), file=sys.stderr)
 
                 is_better = len(hist_valid_scores) == 0 or valid_metric > max(hist_valid_scores)
-                is_better_than_last = len(hist_valid_scores) == 0 or valid_metric > hist_valid_scores[-1]
                 hist_valid_scores.append(valid_metric)
-
-                if (not is_better_than_last) and args.lr_decay:
-                    lr = optimizer.param_groups[0]['lr'] * args.lr_decay
-                    print('decay learning rate to %f' % lr, file=sys.stderr)
-                    optimizer.param_groups[0]['lr'] = lr
 
                 if is_better:
                     patience = 0
