@@ -29,7 +29,7 @@ Options:
     --beam-size=<int>                       beam size [default: 5]
     --lr=<float>                            learning rate [default: 0.001]
     --uniform-init=<float>                  uniformly initialize all parameters [default: 0.1]
-    --save-to=<file>                        model save path
+    --save-to=<file>                        model save path [default: model.bin]
     --valid-niter=<int>                     perform validation after how many iterations [default: 2000]
     --dropout=<float>                       dropout [default: 0.3]
     --max-decoding-time-step=<int>          maximum number of decoding time steps [default: 70]
