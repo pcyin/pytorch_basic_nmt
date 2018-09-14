@@ -66,7 +66,7 @@ class VocabEntry(object):
 
     def to_input_tensor(self, sents: List[List[str]], device: torch.device) -> torch.Tensor:
         word_ids = self.words2indices(sents)
-        sents_t, masks = input_transpose(word_ids, self['<pad>'])
+        sents_t = input_transpose(word_ids, self['<pad>'])
 
         sents_var = torch.tensor(sents_t, dtype=torch.long, device=device)
 

@@ -1,11 +1,12 @@
 # coding=utf-8
 
 """
-A very basic neural machine translation implementation
+A very basic implementation of neural machine translation
 
 Usage:
     nmt.py train --train-src=<file> --train-tgt=<file> --dev-src=<file> --dev-tgt=<file> --vocab=<file> [options]
     nmt.py decode [options] MODEL_PATH TEST_SOURCE_FILE OUTPUT_FILE
+    nmt.py decode [options] MODEL_PATH TEST_SOURCE_FILE TEST_TARGET_FILE OUTPUT_FILE
 
 Options:
     -h --help                               show this screen.
@@ -44,6 +45,7 @@ import numpy as np
 from typing import List, Tuple, Dict, Set, Union
 from docopt import docopt
 from tqdm import tqdm
+from nltk.translate.bleu_score import corpus_bleu, sentence_bleu, SmoothingFunction
 
 import torch
 import torch.nn as nn
@@ -92,21 +94,44 @@ class NMT(nn.Module):
         self.decoder_cell_init = nn.Linear(hidden_size * 2, hidden_size)
 
     @property
-    def device(self):
+    def device(self) -> torch.device:
         return self.src_embed.weight.device
 
-    def forward(self, src_sents_var: torch.Tensor, src_sent_lens: List[int], tgt_sents_var: torch.Tensor) -> torch.Tensor:
-        src_encodings, decoder_init_vec = self.encode(src_sents_var, src_sent_lens)
+    def forward(self, src_sents: List[List[str]], tgt_sents: List[List[str]]) -> torch.Tensor:
+        # (src_sent_len, batch_size)
+        src_sents_var = self.vocab.src.to_input_tensor(src_sents, device=self.device)
+        # (tgt_sent_len, batch_size)
+        tgt_sents_var = self.vocab.tgt.to_input_tensor(tgt_sents, device=self.device)
+        src_sents_len = [len(s) for s in src_sents]
 
-        src_sent_masks = torch.zeros(src_encodings.size(0), src_encodings.size(1), dtype=torch.float, device=self.device)
-        for e_id, src_len in enumerate(src_sent_lens):
-            src_sent_masks[e_id, src_len:] = 1
+        src_encodings, decoder_init_vec = self.encode(src_sents_var, src_sents_len)
 
-        scores = self.decode(src_encodings, src_sent_masks, decoder_init_vec, tgt_sents_var)
+        src_sent_masks = self.get_attention_mask(src_encodings, src_sents_len)
+
+        # (tgt_sent_len - 1, batch_size, hidden_size)
+        att_vecs = self.decode(src_encodings, src_sent_masks, decoder_init_vec, tgt_sents_var[:-1])
+
+        # (tgt_sent_len - 1, batch_size, tgt_vocab_size)
+        tgt_words_log_prob = F.log_softmax(self.readout(att_vecs), dim=-1)
+
+        tgt_words_mask = (tgt_sents_var != self.vocab.tgt['<pad>']).float()
+
+        # (tgt_sent_len - 1, batch_size)
+        tgt_gold_words_log_prob = torch.gather(tgt_words_log_prob, index=tgt_sents_var[1:].unsqueeze(-1), dim=-1).squeeze(-1) * tgt_words_mask[1:]
+
+        # (batch_size)
+        scores = tgt_gold_words_log_prob.sum(dim=0)
 
         return scores
 
-    def encode(self, src_sents_var: torch.Tensor, src_sent_lens: List[int]) -> Tuple[torch.Tensor, Tuple[torch.Tensor]]:
+    def get_attention_mask(self, src_encodings: torch.Tensor, src_sents_len: List[int]) -> torch.Tensor:
+        src_sent_masks = torch.zeros(src_encodings.size(0), src_encodings.size(1), dtype=torch.float,
+                                     device=self.device)
+        for e_id, src_len in enumerate(src_sents_len):
+            src_sent_masks[e_id, src_len:] = 1
+        return src_sent_masks
+
+    def encode(self, src_sents_var: torch.Tensor, src_sent_lens: List[int]) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         # (src_sent_len, batch_size, embed_size)
         src_word_embeds = self.src_embed(src_sents_var)
         packed_src_embed = pack_padded_sequence(src_word_embeds, src_sent_lens)
@@ -140,7 +165,7 @@ class NMT(nn.Module):
 
         h_tm1 = decoder_init_vec
 
-        tgt_word_logits = []
+        att_ves = []
 
         # start from y_0=`<s>`, iterate until y_{T-1}
         for y_tm1_embed in tgt_word_embeds.split(split_size=1):
@@ -150,18 +175,18 @@ class NMT(nn.Module):
 
             (h_t, cell_t), att_t, alpha_t = self.step(x, h_tm1, src_encodings, src_encoding_att_linear, src_sent_masks)
 
-            score_t = self.readout(att_t)   # E.q. (6)
-            tgt_word_logits.append(score_t)
-
             att_tm1 = att_t
             h_tm1 = h_t, cell_t
+            att_ves.append(att_t)
 
         # (tgt_sent_len - 1, batch_size, tgt_vocab_size)
-        tgt_word_logits = torch.stack(tgt_word_logits)
+        att_ves = torch.stack(att_ves)
 
-        return tgt_word_logits
+        return att_ves
 
-    def step(self, x, h_tm1, src_encodings, src_encoding_att_linear, src_sent_masks):
+    def step(self, x: torch.Tensor,
+             h_tm1: Tuple[torch.Tensor, torch.Tensor],
+             src_encodings: torch.Tensor, src_encoding_att_linear: torch.Tensor, src_sent_masks: torch.Tensor) -> Tuple[Tuple, torch.Tensor, torch.Tensor]:
         # h_t: (batch_size, hidden_size)
         h_t, cell_t = self.decoder_lstm(x, h_tm1)
 
@@ -188,7 +213,7 @@ class NMT(nn.Module):
 
         return ctx_vec, softmaxed_att_weight
 
-    def beam_search(self, src_sent: List[str], beam_size: int=5, max_decoding_time_step: int=70):
+    def beam_search(self, src_sent: List[str], beam_size: int=5, max_decoding_time_step: int=70) -> List[Hypothesis]:
         src_sents_var = self.vocab.src.to_input_tensor([src_sent], self.device)
 
         src_encodings, dec_init_vec = self.encode(src_sents_var, [len(src_sent)])
@@ -272,7 +297,7 @@ class NMT(nn.Module):
         return completed_hypotheses
 
     @staticmethod
-    def load(model_path):
+    def load(model_path: str):
         params = torch.load(model_path, map_location=lambda storage, loc: storage)
         args = params['args']
         model = NMT(vocab=params['vocab'], **args)
@@ -280,7 +305,7 @@ class NMT(nn.Module):
 
         return model
 
-    def save(self, path):
+    def save(self, path: str):
         print('save parameters to [%s]' % path, file=sys.stderr)
 
         params = {
@@ -299,15 +324,8 @@ def evaluate_ppl(model, dev_data, loss_fn, batch_size=32):
     cum_loss = 0.
     cum_tgt_words = 0.
     with torch.no_grad():
-        for src_sents, tgt_sents in batch_iter(dev_data, batch_size, shuffle=False):
-            src_sents_len = [len(s) for s in src_sents]
-
-            src_sents_var = model.vocab.src.to_input_tensor(src_sents, model.device)
-            tgt_sents_var = model.vocab.tgt.to_input_tensor(tgt_sents, model.device)
-
-            # (tgt_sent_len, batch_size, tgt_vocab_size)
-            tgt_word_logits = model(src_sents_var, src_sents_len, tgt_sents_var[:-1])
-            loss = loss_fn(tgt_word_logits.view(-1, tgt_word_logits.size(2)), tgt_sents_var[1:].view(-1))
+        for src_sents, tgt_sents in batch_iter(dev_data, batch_size):
+            loss = -model(src_sents, tgt_sents).sum()
 
             cum_loss += loss.item()
             tgt_word_num_to_predict = sum(len(s[1:]) for s in tgt_sents)  # omitting leading `<s>`
@@ -319,6 +337,17 @@ def evaluate_ppl(model, dev_data, loss_fn, batch_size=32):
         model.train()
 
     return ppl
+
+
+def compute_corpus_level_bleu_score(references: List[List[str]], hypotheses: List[Hypothesis]) -> float:
+    # compute BLEU
+    if references[0][0] == '<s>':
+        references = [ref[1:-1] for ref in references]
+
+    bleu_score = corpus_bleu([[ref] for ref in references],
+                             [hyp.value for hyp in hypotheses])
+
+    return bleu_score
 
 
 def train(args: Dict[str, str]):
@@ -379,17 +408,9 @@ def train(args: Dict[str, str]):
 
             batch_size = len(src_sents)
 
-            src_sents_var = vocab.src.to_input_tensor(src_sents, device=device)
-            tgt_sents_var = vocab.tgt.to_input_tensor(tgt_sents, device=device)
-            src_sents_len = [len(s) for s in src_sents]
-
-            # (tgt_sent_len - 1, batch_size, tgt_vocab_size)
-            # `tgt_sents` are padded with `y_1=<s>` and `y_T=</s>`,
-            # `scores` are computed for `y_2` (the first actual target word), up to `y_T=</s>`
-            tgt_word_logits = model(src_sents_var, src_sents_len, tgt_sents_var[:-1])
-
             # (batch_size)
-            batch_loss = cross_entropy_loss(tgt_word_logits.view(-1, tgt_word_logits.size(2)), tgt_sents_var[1:].view(-1))
+            example_losses = -model(src_sents, tgt_sents)
+            batch_loss = example_losses.sum()
             loss = batch_loss / batch_size
 
             loss.backward()
@@ -508,6 +529,8 @@ def beam_search(model: NMT, test_data_src: List[List[str]], beam_size: int, max_
 
 def decode(args: Dict[str, str]):
     test_data_src = read_corpus(args['TEST_SOURCE_FILE'], source='src')
+    if args['TEST_TARGET_FILE']:
+        test_data_tgt = read_corpus(args['TEST_TARGET_FILE'], source='tgt')
 
     print(f"load model from {args['MODEL_PATH']}", file=sys.stderr)
     model = NMT.load(args['MODEL_PATH'])
@@ -518,6 +541,11 @@ def decode(args: Dict[str, str]):
     hypotheses = beam_search(model, test_data_src,
                              beam_size=int(args['--beam-size']),
                              max_decoding_time_step=int(args['--max-decoding-time-step']))
+
+    if args['TEST_TARGET_FILE']:
+        top_hypotheses = [hyps[0] for hyps in hypotheses]
+        bleu_score = compute_corpus_level_bleu_score(test_data_tgt, top_hypotheses)
+        print(f'Corpus BLEU: {bleu_score}', file=sys.stderr)
 
     with open(args['OUTPUT_FILE'], 'w') as f:
         for src_sent, hyps in zip(test_data_src, hypotheses):

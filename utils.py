@@ -10,12 +10,10 @@ def input_transpose(sents, pad_token):
     batch_size = len(sents)
 
     sents_t = []
-    masks = []
     for i in range(max_len):
         sents_t.append([sents[k][i] if len(sents[k]) > i else pad_token for k in range(batch_size)])
-        masks.append([1 if len(sents[k]) > i else 0 for k in range(batch_size)])
 
-    return sents_t, masks
+    return sents_t
 
 
 def read_corpus(file_path, source):
