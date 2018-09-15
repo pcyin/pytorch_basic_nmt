@@ -460,13 +460,7 @@ def train(args: Dict[str, str]):
                 print('validation: iter %d, dev. ppl %f' % (train_iter, dev_ppl), file=sys.stderr)
 
                 is_better = len(hist_valid_scores) == 0 or valid_metric > max(hist_valid_scores)
-                is_better_than_last = len(hist_valid_scores) == 0 or valid_metric > hist_valid_scores[-1]
                 hist_valid_scores.append(valid_metric)
-
-                if (not is_better_than_last) and args.lr_decay:
-                    lr = optimizer.param_groups[0]['lr'] * args.lr_decay
-                    print('decay learning rate to %f' % lr, file=sys.stderr)
-                    optimizer.param_groups[0]['lr'] = lr
 
                 if is_better:
                     patience = 0
@@ -527,8 +521,10 @@ def beam_search(model: NMT, test_data_src: List[List[str]], beam_size: int, max_
 
 
 def decode(args: Dict[str, str]):
+    print(f"load test source sentences from [{args['TEST_SOURCE_FILE']}]", file=sys.stderr)
     test_data_src = read_corpus(args['TEST_SOURCE_FILE'], source='src')
     if args['TEST_TARGET_FILE']:
+        print(f"load test target sentences from [{args['TEST_TARGET_FILE']}]", file=sys.stderr)
         test_data_tgt = read_corpus(args['TEST_TARGET_FILE'], source='tgt')
 
     print(f"load model from {args['MODEL_PATH']}", file=sys.stderr)
