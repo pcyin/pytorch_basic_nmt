@@ -1,0 +1,14 @@
+name: pytorch0.4
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.6.5
+  - pytorch=0.4.1
+  - torchvision
+  - numpy
+  - nltk
+  - ipython
+  - docopt
+  - pip:
+    - tqdm
