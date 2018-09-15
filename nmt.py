@@ -47,12 +47,6 @@ from docopt import docopt
 from tqdm import tqdm
 from nltk.translate.bleu_score import corpus_bleu, sentence_bleu, SmoothingFunction
 
-import torch
-import torch.nn as nn
-import torch.nn.utils
-import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
-
 from utils import read_corpus, batch_iter
 from vocab import Vocab, VocabEntry
 
@@ -70,278 +64,72 @@ class NMT(nn.Module):
         self.dropout_rate = dropout_rate
         self.vocab = vocab
 
-        self.src_embed = nn.Embedding(len(vocab.src), embed_size, padding_idx=vocab.src['<pad>'])
-        self.tgt_embed = nn.Embedding(len(vocab.tgt), embed_size, padding_idx=vocab.tgt['<pad>'])
+        # initialize neural network layers...
 
-        self.encoder_lstm = nn.LSTM(embed_size, hidden_size, bidirectional=True)
-        self.decoder_lstm = nn.LSTMCell(embed_size + hidden_size, hidden_size)
+    def forward(self, src_sents: List[List[str]], tgt_sents: List[List[str]]):
+        """
+        take a mini-batch of source and target sentences, compute the negative log-likelihood of 
+        target sentences.
 
-        # attention: dot product attention
-        # project source encoding to decoder rnn's state space
-        self.att_src_linear = nn.Linear(hidden_size * 2, hidden_size, bias=False)
-
-        # transformation of decoder hidden states and context vectors before reading out target words
-        # this produces the `attentional vector` in (Luong et al., 2015)
-        self.att_vec_linear = nn.Linear(hidden_size * 2 + hidden_size, hidden_size, bias=False)
-
-        # prediction layer of the target vocabulary
-        self.readout = nn.Linear(hidden_size, len(vocab.tgt), bias=False)
-
-        # dropout layer
-        self.dropout = nn.Dropout(self.dropout_rate)
-
-        # initialize the decoder's state and cells with encoder hidden states
-        self.decoder_cell_init = nn.Linear(hidden_size * 2, hidden_size)
-
-    @property
-    def device(self) -> torch.device:
-        return self.src_embed.weight.device
-
-    def forward(self, src_sents: List[List[str]], tgt_sents: List[List[str]]) -> torch.Tensor:
-        # (src_sent_len, batch_size)
-        src_sents_var = self.vocab.src.to_input_tensor(src_sents, device=self.device)
-        # (tgt_sent_len, batch_size)
-        tgt_sents_var = self.vocab.tgt.to_input_tensor(tgt_sents, device=self.device)
-        src_sents_len = [len(s) for s in src_sents]
-
-        src_encodings, decoder_init_vec = self.encode(src_sents_var, src_sents_len)
-
-        src_sent_masks = self.get_attention_mask(src_encodings, src_sents_len)
-
-        # (tgt_sent_len - 1, batch_size, hidden_size)
-        att_vecs = self.decode(src_encodings, src_sent_masks, decoder_init_vec, tgt_sents_var[:-1])
-
-        # (tgt_sent_len - 1, batch_size, tgt_vocab_size)
-        tgt_words_log_prob = F.log_softmax(self.readout(att_vecs), dim=-1)
-
-        # (tgt_sent_len, batch_size)
-        tgt_words_mask = (tgt_sents_var != self.vocab.tgt['<pad>']).float()
-
-        # (tgt_sent_len - 1, batch_size)
-        tgt_gold_words_log_prob = torch.gather(tgt_words_log_prob, index=tgt_sents_var[1:].unsqueeze(-1), dim=-1).squeeze(-1) * tgt_words_mask[1:]
-
-        # (batch_size)
-        scores = tgt_gold_words_log_prob.sum(dim=0)
+        :param src_sents: list of source sentence tokens
+        :param tgt_sents: list of target sentence tokens, wrapped by `<s>` and `</s>`
+        """
+        src_encodings, decoder_init_state = self.encode(src_sents, tgt_sents)
+        scores = self.decode(src_encodings, decoder_init_state, tgt_sents)
 
         return scores
 
-    def get_attention_mask(self, src_encodings: torch.Tensor, src_sents_len: List[int]) -> torch.Tensor:
-        src_sent_masks = torch.zeros(src_encodings.size(0), src_encodings.size(1), dtype=torch.float,
-                                     device=self.device)
-        for e_id, src_len in enumerate(src_sents_len):
-            src_sent_masks[e_id, src_len:] = 1
-        return src_sent_masks
+    def encode(self, src_sents: List[List[str]]) -> Tuple[Any, Any]:
+        """
+        Use a GRU/LSTM to encode source sentences into hidden states
 
-    def encode(self, src_sents_var: torch.Tensor, src_sent_lens: List[int]) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        # (src_sent_len, batch_size, embed_size)
-        src_word_embeds = self.src_embed(src_sents_var)
-        packed_src_embed = pack_padded_sequence(src_word_embeds, src_sent_lens)
+        :param src_encodings: hidden states of tokens in source sentences
+        :param decoder_init_state: decoder GRU/LSTM's initial state, computed from source encodings
+        """
 
-        # src_encodings: (src_sent_len, batch_size, hidden_size * 2)
-        src_encodings, (last_state, last_cell) = self.encoder_lstm(packed_src_embed)
-        src_encodings, _ = pad_packed_sequence(src_encodings)
+        return src_encodings, decoder_init_state
 
-        # (batch_size, src_sent_len, hidden_size * 2)
-        src_encodings = src_encodings.permute(1, 0, 2)
+    def decode(self, src_encodings: Any, decoder_init_state: Any, tgt_sents: List[List[str]]) -> Any:
+        """
+        Given source encodings, compute the log-likelihood of predicting the gold-standard target
+        sentence tokens
+        """
 
-        dec_init_cell = self.decoder_cell_init(torch.cat([last_cell[0], last_cell[1]], dim=1))
-        dec_init_state = torch.tanh(dec_init_cell)
-
-        return src_encodings, (dec_init_state, dec_init_cell)
-
-    def decode(self, src_encodings: torch.Tensor, src_sent_masks: torch.Tensor,
-               decoder_init_vec: Tuple[torch.Tensor, torch.Tensor], tgt_sents_var: torch.Tensor) -> torch.Tensor:
-        # (batch_size, src_sent_len, hidden_size)
-        src_encoding_att_linear = self.att_src_linear(src_encodings)
-
-        batch_size = src_encodings.size(0)
-
-        # initialize the attentional vector
-        att_tm1 = torch.zeros(batch_size, self.hidden_size, device=self.device)
-
-        # (tgt_sent_len, batch_size, embed_size)
-        # here we omit the last word, which is always </s>.
-        # Note that the embedding of </s> is not used in decoding
-        tgt_word_embeds = self.tgt_embed(tgt_sents_var)
-
-        h_tm1 = decoder_init_vec
-
-        att_ves = []
-
-        # start from y_0=`<s>`, iterate until y_{T-1}
-        for y_tm1_embed in tgt_word_embeds.split(split_size=1):
-            # input feeding: concate y_tm1 and previous attentional vector
-            # (batch_size, hidden_size + embed_size)
-            x = torch.cat([y_tm1_embed.squeeze(0), att_tm1], dim=-1)
-
-            (h_t, cell_t), att_t, alpha_t = self.step(x, h_tm1, src_encodings, src_encoding_att_linear, src_sent_masks)
-
-            att_tm1 = att_t
-            h_tm1 = h_t, cell_t
-            att_ves.append(att_t)
-
-        # (tgt_sent_len - 1, batch_size, tgt_vocab_size)
-        att_ves = torch.stack(att_ves)
-
-        return att_ves
-
-    def step(self, x: torch.Tensor,
-             h_tm1: Tuple[torch.Tensor, torch.Tensor],
-             src_encodings: torch.Tensor, src_encoding_att_linear: torch.Tensor, src_sent_masks: torch.Tensor) -> Tuple[Tuple, torch.Tensor, torch.Tensor]:
-        # h_t: (batch_size, hidden_size)
-        h_t, cell_t = self.decoder_lstm(x, h_tm1)
-
-        ctx_t, alpha_t = self.dot_prod_attention(h_t, src_encodings, src_encoding_att_linear, src_sent_masks)
-
-        att_t = torch.tanh(self.att_vec_linear(torch.cat([h_t, ctx_t], 1)))  # E.q. (5)
-        att_t = self.dropout(att_t)
-
-        return (cell_t, h_t), att_t, alpha_t
-
-    def dot_prod_attention(self, h_t: torch.Tensor, src_encoding: torch.Tensor, src_encoding_att_linear: torch.Tensor,
-                           mask: torch.Tensor=None) -> Tuple[torch.Tensor, torch.Tensor]:
-        # (batch_size, src_sent_len)
-        att_weight = torch.bmm(src_encoding_att_linear, h_t.unsqueeze(2)).squeeze(2)
-
-        if mask is not None:
-            att_weight.data.masked_fill_(mask.byte(), -float('inf'))
-
-        softmaxed_att_weight = F.softmax(att_weight, dim=-1)
-
-        att_view = (att_weight.size(0), 1, att_weight.size(1))
-        # (batch_size, hidden_size)
-        ctx_vec = torch.bmm(softmaxed_att_weight.view(*att_view), src_encoding).squeeze(1)
-
-        return ctx_vec, softmaxed_att_weight
+        return scores
 
     def beam_search(self, src_sent: List[str], beam_size: int=5, max_decoding_time_step: int=70) -> List[Hypothesis]:
-        src_sents_var = self.vocab.src.to_input_tensor([src_sent], self.device)
+        """
+        Given a single source sentence, perform beam search
+        """
 
-        src_encodings, dec_init_vec = self.encode(src_sents_var, [len(src_sent)])
-        src_encodings_att_linear = self.att_src_linear(src_encodings)
-
-        h_tm1 = dec_init_vec
-        att_tm1 = torch.zeros(1, self.hidden_size, device=self.device)
-
-        eos_id = self.vocab.tgt['</s>']
-
-        hypotheses = [['<s>']]
-        hyp_scores = torch.zeros(len(hypotheses), dtype=torch.float, device=self.device)
-        completed_hypotheses = []
-
-        t = 0
-        while len(completed_hypotheses) < beam_size and t < max_decoding_time_step:
-            t += 1
-            hyp_num = len(hypotheses)
-
-            exp_src_encodings = src_encodings.expand(hyp_num,
-                                                     src_encodings.size(1),
-                                                     src_encodings.size(2))
-
-            exp_src_encodings_att_linear = src_encodings_att_linear.expand(hyp_num,
-                                                                           src_encodings_att_linear.size(1),
-                                                                           src_encodings_att_linear.size(2))
-
-            y_tm1 = torch.tensor([self.vocab.tgt[hyp[-1]] for hyp in hypotheses], dtype=torch.long, device=self.device)
-            y_tm1_embed = self.tgt_embed(y_tm1)
-
-            x = torch.cat([y_tm1_embed, att_tm1], dim=-1)
-
-            (h_t, cell_t), att_t, alpha_t = self.step(x, h_tm1,
-                                                      exp_src_encodings, exp_src_encodings_att_linear, src_sent_masks=None)
-
-            # log probabilities over target words
-            log_p_t = F.log_softmax(self.readout(att_t), dim=-1)
-
-            live_hyp_num = beam_size - len(completed_hypotheses)
-            contiuating_hyp_scores = (hyp_scores.unsqueeze(1).expand_as(log_p_t) + log_p_t).view(-1)
-            top_cand_hyp_scores, top_cand_hyp_pos = torch.topk(contiuating_hyp_scores, k=live_hyp_num)
-
-            prev_hyp_ids = top_cand_hyp_pos / len(self.vocab.tgt)
-            hyp_word_ids = top_cand_hyp_pos % len(self.vocab.tgt)
-
-            new_hypotheses = []
-            live_hyp_ids = []
-            new_hyp_scores = []
-
-            for prev_hyp_id, hyp_word_id, cand_new_hyp_score in zip(prev_hyp_ids, hyp_word_ids, top_cand_hyp_scores):
-                prev_hyp_id = prev_hyp_id.item()
-                hyp_word_id = hyp_word_id.item()
-                cand_new_hyp_score = cand_new_hyp_score.item()
-
-                hyp_word = self.vocab.tgt.id2word[hyp_word_id]
-                new_hyp_sent = hypotheses[prev_hyp_id] + [hyp_word]
-                if hyp_word == '</s>':
-                    completed_hypotheses.append(Hypothesis(value=new_hyp_sent[1:-1],
-                                                           score=cand_new_hyp_score))
-                else:
-                    new_hypotheses.append(new_hyp_sent)
-                    live_hyp_ids.append(prev_hyp_id)
-                    new_hyp_scores.append(cand_new_hyp_score)
-
-            if len(completed_hypotheses) == beam_size:
-                break
-
-            live_hyp_ids = torch.tensor(live_hyp_ids, dtype=torch.long, device=self.device)
-            h_tm1 = (h_t[live_hyp_ids], cell_t[live_hyp_ids])
-            att_tm1 = att_t[live_hyp_ids]
-
-            hypotheses = new_hypotheses
-            hyp_scores = torch.tensor(new_hyp_scores, dtype=torch.float, device=self.device)
-
-        if len(completed_hypotheses) == 0:
-            completed_hypotheses.append(Hypothesis(value=hypotheses[0][1:],
-                                                   score=hyp_scores[0].item()))
-
-        completed_hypotheses.sort(key=lambda hyp: hyp.score, reverse=True)
-
-        return completed_hypotheses
+        return hypotheses
 
     @staticmethod
     def load(model_path: str):
-        params = torch.load(model_path, map_location=lambda storage, loc: storage)
-        args = params['args']
-        model = NMT(vocab=params['vocab'], **args)
-        model.load_state_dict(params['state_dict'])
+        """
+        Load a pre-trained model
+        """
 
         return model
 
     def save(self, path: str):
-        print('save parameters to [%s]' % path, file=sys.stderr)
-
-        params = {
-            'args': dict(embed_size=self.embed_size, hidden_size=self.hidden_size, dropout_rate=self.dropout_rate),
-            'vocab': self.vocab,
-            'state_dict': self.state_dict()
-        }
-
-        torch.save(params, path)
+        """
+        Save current model to file
+        """
 
 
 def evaluate_ppl(model, dev_data, batch_size=32):
-    was_training = model.training
-    model.eval()
-
-    cum_loss = 0.
-    cum_tgt_words = 0.
-    with torch.no_grad():
-        for src_sents, tgt_sents in batch_iter(dev_data, batch_size):
-            loss = -model(src_sents, tgt_sents).sum()
-
-            cum_loss += loss.item()
-            tgt_word_num_to_predict = sum(len(s[1:]) for s in tgt_sents)  # omitting leading `<s>`
-            cum_tgt_words += tgt_word_num_to_predict
-
-        ppl = np.exp(cum_loss / cum_tgt_words)
-
-    if was_training:
-        model.train()
+    """
+    Evaluate perplexity on dev sentences
+    """
 
     return ppl
 
 
 def compute_corpus_level_bleu_score(references: List[List[str]], hypotheses: List[Hypothesis]) -> float:
-    # compute BLEU
+    """
+    Given decoding results and reference sentences, compute corpus-level BLEU score
+    """
     if references[0][0] == '<s>':
         references = [ref[1:-1] for ref in references]
 
@@ -373,26 +161,10 @@ def train(args: Dict[str, str]):
                 hidden_size=int(args['--hidden-size']),
                 dropout_rate=float(args['--dropout']),
                 vocab=vocab)
-    model.train()
-
-    uniform_init = float(args['--uniform-init'])
-    print('uniformly initialize parameters [-%f, +%f]' % (uniform_init, uniform_init), file=sys.stderr)
-    for p in model.parameters():
-        p.data.uniform_(-uniform_init, uniform_init)
-
-    vocab_mask = torch.ones(len(vocab.tgt))
-    vocab_mask[vocab.tgt['<pad>']] = 0
-
-    device = torch.device("cuda:0" if args['--cuda'] else "cpu")
-    print('use device: %s' % device, file=sys.stderr)
-
-    model = model.to(device)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=float(args['--lr']))
 
     num_trial = 0
-    train_iter = patience = cum_loss = report_loss = cum_tgt_words = report_tgt_words = 0
-    cum_examples = report_examples = epoch = valid_num = 0
+    train_iter = patience = cum_loss = report_loss = cumulative_tgt_words = report_tgt_words = 0
+    cumulative_examples = report_examples = epoch = valid_num = 0
     hist_valid_scores = []
     train_time = begin_time = time.time()
     print('begin Maximum Likelihood training')
@@ -403,38 +175,26 @@ def train(args: Dict[str, str]):
         for src_sents, tgt_sents in batch_iter(train_data, batch_size=train_batch_size, shuffle=True):
             train_iter += 1
 
-            optimizer.zero_grad()
-
             batch_size = len(src_sents)
 
             # (batch_size)
-            example_losses = -model(src_sents, tgt_sents)
-            batch_loss = example_losses.sum()
-            loss = batch_loss / batch_size
+            loss = -model(src_sents, tgt_sents)
 
-            loss.backward()
-
-            # clip gradient
-            grad_norm = torch.nn.utils.clip_grad_norm(model.parameters(), clip_grad)
-
-            optimizer.step()
-
-            batch_losses_val = batch_loss.item()
-            report_loss += batch_losses_val
-            cum_loss += batch_losses_val
+            report_loss += loss
+            cum_loss += loss
 
             tgt_words_num_to_predict = sum(len(s[1:]) for s in tgt_sents)  # omitting leading `<s>`
             report_tgt_words += tgt_words_num_to_predict
-            cum_tgt_words += tgt_words_num_to_predict
+            cumulative_tgt_words += tgt_words_num_to_predict
             report_examples += batch_size
-            cum_examples += batch_size
+            cumulative_examples += batch_size
 
             if train_iter % log_every == 0:
                 print('epoch %d, iter %d, avg. loss %.2f, avg. ppl %.2f ' \
                       'cum. examples %d, speed %.2f words/sec, time elapsed %.2f sec' % (epoch, train_iter,
                                                                                          report_loss / report_examples,
                                                                                          math.exp(report_loss / report_tgt_words),
-                                                                                         cum_examples,
+                                                                                         cumulative_examples,
                                                                                          report_tgt_words / (time.time() - train_time),
                                                                                          time.time() - begin_time), file=sys.stderr)
 
@@ -444,11 +204,11 @@ def train(args: Dict[str, str]):
             # perform validation
             if train_iter % valid_niter == 0:
                 print('epoch %d, iter %d, cum. loss %.2f, cum. ppl %.2f cum. examples %d' % (epoch, train_iter,
-                                                                                         cum_loss / cum_examples,
-                                                                                         np.exp(cum_loss / cum_tgt_words),
-                                                                                         cum_examples), file=sys.stderr)
+                                                                                         cum_loss / cumulative_examples,
+                                                                                         np.exp(cum_loss / cumulative_tgt_words),
+                                                                                         cumulative_examples), file=sys.stderr)
 
-                cum_loss = cum_examples = cum_tgt_words = 0.
+                cum_loss = cumulative_examples = cumulative_tgt_words = 0.
                 valid_num += 1
 
                 print('begin validation ...', file=sys.stderr)
@@ -467,8 +227,7 @@ def train(args: Dict[str, str]):
                     print('save currently the best model to [%s]' % model_save_path, file=sys.stderr)
                     model.save(model_save_path)
 
-                    # also save the optimizers' state
-                    torch.save(optimizer.state_dict(), model_save_path + '.optim')
+                    # You may also save the optimizer's state
                 elif patience < int(args['--patience']):
                     patience += 1
                     print('hit patience %d' % patience, file=sys.stderr)
@@ -480,21 +239,15 @@ def train(args: Dict[str, str]):
                             print('early stop!', file=sys.stderr)
                             exit(0)
 
-                        # decay lr, and restore from previously best checkpoint
-                        lr = optimizer.param_groups[0]['lr'] * float(args['--lr-decay'])
+                        # decay learning rate, and restore from previously best checkpoint
+                        lr = lr * float(args['--lr-decay'])
                         print('load previously best model and decay learning rate to %f' % lr, file=sys.stderr)
 
                         # load model
-                        params = torch.load(model_save_path, map_location=lambda storage, loc: storage)
-                        model.load_state_dict(params['state_dict'])
-                        model = model.to(device)
+                        model_save_path
 
                         print('restore parameters of the optimizers', file=sys.stderr)
-                        optimizer.load_state_dict(torch.load(model_save_path + '.optim'))
-
-                        # set new lr
-                        for param_group in optimizer.param_groups:
-                            param_group['lr'] = lr
+                        # You may also need to load the state of the optimizer saved before
 
                         # reset patience
                         patience = 0
@@ -506,16 +259,12 @@ def train(args: Dict[str, str]):
 
 def beam_search(model: NMT, test_data_src: List[List[str]], beam_size: int, max_decoding_time_step: int) -> List[List[Hypothesis]]:
     was_training = model.training
-    model.eval()
 
     hypotheses = []
-    with torch.no_grad():
-        for src_sent in tqdm(test_data_src, desc='Decoding', file=sys.stdout):
-            example_hyps = model.beam_search(src_sent, beam_size=beam_size, max_decoding_time_step=max_decoding_time_step)
+    for src_sent in tqdm(test_data_src, desc='Decoding', file=sys.stdout):
+        example_hyps = model.beam_search(src_sent, beam_size=beam_size, max_decoding_time_step=max_decoding_time_step)
 
-            hypotheses.append(example_hyps)
-
-    if was_training: model.train(was_training)
+        hypotheses.append(example_hyps)
 
     return hypotheses
 
@@ -527,9 +276,6 @@ def decode(args: Dict[str, str]):
 
     print(f"load model from {args['MODEL_PATH']}", file=sys.stderr)
     model = NMT.load(args['MODEL_PATH'])
-
-    if args['--cuda']:
-        model = model.to(torch.device("cuda:0"))
 
     hypotheses = beam_search(model, test_data_src,
                              beam_size=int(args['--beam-size']),
@@ -550,11 +296,9 @@ def decode(args: Dict[str, str]):
 def main():
     args = docopt(__doc__)
 
-    # seed the RNG
+    # seed the random number generator (RNG), you may
+    # also want to seed the RNG of tensorflow, pytorch, dynet, etc.
     seed = int(args['--seed'])
-    torch.manual_seed(seed)
-    if args['--cuda']:
-        torch.cuda.manual_seed(seed)
     np.random.seed(seed * 13 // 7)
 
     if args['train']:
@@ -562,7 +306,7 @@ def main():
     elif args['decode']:
         decode(args)
     else:
-        raise RuntimeError(f'invalid run mode')
+        raise RuntimeError(f'invalid mode')
 
 
 if __name__ == '__main__':

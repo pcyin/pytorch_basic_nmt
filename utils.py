@@ -2,10 +2,14 @@ import math
 from typing import List
 
 import numpy as np
-import torch
 
 
 def input_transpose(sents, pad_token):
+    """
+    This function transforms a list of sentences of shape (batch_size, token_num) into 
+    a list of shape (token_num, batch_size). You may find this function useful if you
+    use pytorch
+    """
     max_len = max(len(s) for s in sents)
     batch_size = len(sents)
 
@@ -29,6 +33,9 @@ def read_corpus(file_path, source):
 
 
 def batch_iter(data, batch_size, shuffle=False):
+    """
+    Given a list of examples, shuffle and slice them into mini-batches
+    """
     batch_num = math.ceil(len(data) / batch_size)
     index_array = list(range(len(data)))
 

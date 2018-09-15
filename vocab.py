@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 """
+Generate the vocabulary file for neural network training
+A vocabulary file is a mapping of tokens to their indices
+
 Usage:
     vocab.py --train-src=<file> --train-tgt=<file> [options] VOCAB_FILE
 
@@ -16,7 +19,6 @@ from collections import Counter
 from itertools import chain
 from docopt import docopt
 import pickle
-import torch
 
 from utils import read_corpus, input_transpose
 
@@ -63,14 +65,6 @@ class VocabEntry(object):
             return [[self[w] for w in s] for s in sents]
         else:
             return [self[w] for w in sents]
-
-    def to_input_tensor(self, sents: List[List[str]], device: torch.device) -> torch.Tensor:
-        word_ids = self.words2indices(sents)
-        sents_t = input_transpose(word_ids, self['<pad>'])
-
-        sents_var = torch.tensor(sents_t, dtype=torch.long, device=device)
-
-        return sents_var
 
     @staticmethod
     def from_corpus(corpus, size, freq_cutoff=2):
