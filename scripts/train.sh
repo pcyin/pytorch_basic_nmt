@@ -20,7 +20,7 @@ python nmt.py \
     --train-src ${train_src} \
     --train-tgt ${train_tgt} \
     --dev-src ${dev_src} \
-    --dev-tgt ${dev_tgt}
+    --dev-tgt ${dev_tgt} \
     --save-to ${work_dir}/model.bin \
     --valid-niter 2400 \
     --batch-size 64 \
@@ -29,14 +29,15 @@ python nmt.py \
     --uniform-init 0.1 \
     --dropout 0.2 \
     --clip-grad 5.0 \
-    --lr-decay 0.5
+    --lr-decay 0.5 2>${work_dir}/err.log
 
 python nmt.py \
     decode \
+    --cuda \
     --beam-size 5 \
     --max-decoding-time-step 100 \
-    ${test_src} \
     ${work_dir}/model.bin \
+    ${test_src} \
     ${work_dir}/decode.txt
 
 perl multi-bleu.perl ${test_tgt} < ${work_dir}/decode.txt
