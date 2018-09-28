@@ -30,9 +30,9 @@ Options:
     --beam-size=<int>                       beam size [default: 5]
     --lr=<float>                            learning rate [default: 0.001]
     --uniform-init=<float>                  uniformly initialize all parameters [default: 0.1]
-    --save-to=<file>                        model save path
+    --save-to=<file>                        model save path [default: model.bin]
     --valid-niter=<int>                     perform validation after how many iterations [default: 2000]
-    --dropout=<float>                       dropout [default: 0.2]
+    --dropout=<float>                       dropout [default: 0.3]
     --max-decoding-time-step=<int>          maximum number of decoding time steps [default: 70]
 """
 
@@ -315,7 +315,7 @@ class NMT(nn.Module):
         return model
 
     def save(self, path: str):
-        print('save parameters to [%s]' % path, file=sys.stderr)
+        print('save model parameters to [%s]' % path, file=sys.stderr)
 
         params = {
             'args': dict(embed_size=self.embed_size, hidden_size=self.hidden_size, dropout_rate=self.dropout_rate, input_feed=self.input_feed),
@@ -531,8 +531,10 @@ def beam_search(model: NMT, test_data_src: List[List[str]], beam_size: int, max_
 
 
 def decode(args: Dict[str, str]):
+    print(f"load test source sentences from [{args['TEST_SOURCE_FILE']}]", file=sys.stderr)
     test_data_src = read_corpus(args['TEST_SOURCE_FILE'], source='src')
     if args['TEST_TARGET_FILE']:
+        print(f"load test target sentences from [{args['TEST_TARGET_FILE']}]", file=sys.stderr)
         test_data_tgt = read_corpus(args['TEST_TARGET_FILE'], source='tgt')
 
     print(f"load model from {args['MODEL_PATH']}", file=sys.stderr)
