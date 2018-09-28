@@ -23,6 +23,7 @@ Options:
     --clip-grad=<float>                     gradient clipping [default: 5.0]
     --log-every=<int>                       log every [default: 10]
     --max-epoch=<int>                       max epoch [default: 30]
+    --input-feed                            Use input feeding
     --patience=<int>                        wait for how many iterations to decay learning rate [default: 5]
     --max-num-trial=<int>                   terminate training after how many trials [default: 5]
     --lr-decay=<float>                      learning rate decay [default: 0.5]
@@ -62,19 +63,21 @@ Hypothesis = namedtuple('Hypothesis', ['value', 'score'])
 
 class NMT(nn.Module):
 
-    def __init__(self, embed_size, hidden_size, vocab, dropout_rate=0.2):
+    def __init__(self, embed_size, hidden_size, vocab, dropout_rate=0.2, input_feed=True):
         super(NMT, self).__init__()
 
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.dropout_rate = dropout_rate
         self.vocab = vocab
+        self.input_feed = input_feed
 
         self.src_embed = nn.Embedding(len(vocab.src), embed_size, padding_idx=vocab.src['<pad>'])
         self.tgt_embed = nn.Embedding(len(vocab.tgt), embed_size, padding_idx=vocab.tgt['<pad>'])
 
         self.encoder_lstm = nn.LSTM(embed_size, hidden_size, bidirectional=True)
-        self.decoder_lstm = nn.LSTMCell(embed_size + hidden_size, hidden_size)
+        decoder_lstm_input = embed_size + hidden_size if self.input_feed else embed_size
+        self.decoder_lstm = nn.LSTMCell(decoder_lstm_input, hidden_size)
 
         # attention: dot product attention
         # project source encoding to decoder rnn's state space
@@ -170,9 +173,14 @@ class NMT(nn.Module):
 
         # start from y_0=`<s>`, iterate until y_{T-1}
         for y_tm1_embed in tgt_word_embeds.split(split_size=1):
-            # input feeding: concate y_tm1 and previous attentional vector
-            # (batch_size, hidden_size + embed_size)
-            x = torch.cat([y_tm1_embed.squeeze(0), att_tm1], dim=-1)
+            y_tm1_embed = y_tm1_embed.squeeze(0)
+            if self.input_feed:
+                # input feeding: concate y_tm1 and previous attentional vector
+                # (batch_size, hidden_size + embed_size)
+
+                x = torch.cat([y_tm1_embed, att_tm1], dim=-1)
+            else:
+                x = y_tm1_embed
 
             (h_t, cell_t), att_t, alpha_t = self.step(x, h_tm1, src_encodings, src_encoding_att_linear, src_sent_masks)
 
@@ -310,7 +318,7 @@ class NMT(nn.Module):
         print('save parameters to [%s]' % path, file=sys.stderr)
 
         params = {
-            'args': dict(embed_size=self.embed_size, hidden_size=self.hidden_size, dropout_rate=self.dropout_rate),
+            'args': dict(embed_size=self.embed_size, hidden_size=self.hidden_size, dropout_rate=self.dropout_rate, input_feed=self.input_feed),
             'vocab': self.vocab,
             'state_dict': self.state_dict()
         }
@@ -351,7 +359,7 @@ def compute_corpus_level_bleu_score(references: List[List[str]], hypotheses: Lis
     return bleu_score
 
 
-def train(args: Dict[str, str]):
+def train(args: Dict):
     train_data_src = read_corpus(args['--train-src'], source='src')
     train_data_tgt = read_corpus(args['--train-tgt'], source='tgt')
 
@@ -372,13 +380,15 @@ def train(args: Dict[str, str]):
     model = NMT(embed_size=int(args['--embed-size']),
                 hidden_size=int(args['--hidden-size']),
                 dropout_rate=float(args['--dropout']),
+                input_feed=args['--input-feed'],
                 vocab=vocab)
     model.train()
 
     uniform_init = float(args['--uniform-init'])
-    print('uniformly initialize parameters [-%f, +%f]' % (uniform_init, uniform_init), file=sys.stderr)
-    for p in model.parameters():
-        p.data.uniform_(-uniform_init, uniform_init)
+    if np.abs(uniform_init) > 0.:
+        print('uniformly initialize parameters [-%f, +%f]' % (uniform_init, uniform_init), file=sys.stderr)
+        for p in model.parameters():
+            p.data.uniform_(-uniform_init, uniform_init)
 
     vocab_mask = torch.ones(len(vocab.tgt))
     vocab_mask[vocab.tgt['<pad>']] = 0
