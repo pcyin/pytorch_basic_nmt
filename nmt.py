@@ -252,8 +252,11 @@ class NMT(nn.Module):
 
             y_tm1 = torch.tensor([self.vocab.tgt[hyp[-1]] for hyp in hypotheses], dtype=torch.long, device=self.device)
             y_tm1_embed = self.tgt_embed(y_tm1)
-
-            x = torch.cat([y_tm1_embed, att_tm1], dim=-1)
+            
+            if self.input_feed:
+                x = torch.cat([y_tm1_embed, att_tm1], dim=-1)
+            else:
+                x = y_tm1_embed
 
             (h_t, cell_t), att_t, alpha_t = self.step(x, h_tm1,
                                                       exp_src_encodings, exp_src_encodings_att_linear, src_sent_masks=None)
