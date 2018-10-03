@@ -370,7 +370,7 @@ class NMT(nn.Module):
             sample_ends |= torch.eq(y_t, eos_id).byte()
             sample_scores = sample_scores + log_p_y_t * (1. - sample_ends.float())
 
-            if torch.all(sample_ends):
+            if sample_ends.all():
                 break
 
             att_tm1 = att_t
@@ -668,7 +668,7 @@ def train_mcmc_raml(args: Dict):
             optimizer.zero_grad()
 
             with torch.no_grad():
-                p_gold_ys = proposal_model(src_sents, tgt_sents).numpy()
+                p_gold_ys = proposal_model(src_sents, tgt_sents).cpu().numpy()
 
                 # generate samples
                 samples = proposal_model.sample(src_sents, sample_size=sample_size)
@@ -686,7 +686,7 @@ def train_mcmc_raml(args: Dict):
                         valid_samples.append((src_sent, sample.value))
 
             total_sample_num = len(valid_samples)
-            print(f'Num. samples={len(total_sample_num)}', file=sys.stderr)
+            print(f'Num. samples={total_sample_num}', file=sys.stderr)
             if total_sample_num == 0:
                 continue
 
