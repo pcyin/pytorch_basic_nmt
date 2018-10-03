@@ -1,5 +1,8 @@
 #!/bin/sh
 
+source ~/.bashrc
+source activate code_mining_pytorch0.4
+
 vocab="data/vocab.bin"
 train_src="data/train.de-en.de.wmixerprep"
 train_tgt="data/train.de-en.en.wmixerprep"
@@ -10,13 +13,13 @@ dev_tgt="data/valid.de-en.en"
 test_src="data/test.de-en.de"
 test_tgt="data/test.de-en.en"
 
-work_dir="raml_work_dir"
+work_dir="exp_runs/raml_work_dir_sample5"
 proposal_model_path="work_dir/model.bin"
 
 mkdir -p ${work_dir}
 echo save results to ${work_dir}
 
-python nmt.py \
+python -u nmt.py \
     train-mcmc-raml \
     --cuda \
     --vocab ${vocab} \
@@ -26,8 +29,10 @@ python nmt.py \
     --dev-tgt ${dev_tgt} \
     --proposal-model ${proposal_model_path} \
     --save-to ${work_dir}/model.bin \
-    --valid-niter 2400 \
-    --batch-size 64 \
+    --input-feed \
+    --valid-niter 6700 \
+    --batch-size 20 \
+    --sample-size 5 \
     --hidden-size 256 \
     --embed-size 256 \
     --uniform-init 0.1 \
