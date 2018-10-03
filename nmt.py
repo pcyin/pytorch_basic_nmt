@@ -654,6 +654,7 @@ def train_mcmc_raml(args: Dict):
 
     num_trial = 0
     train_iter = patience = cum_loss = report_loss = cum_tgt_words = report_tgt_words = 0
+    report_total_samples = 0
     cum_examples = report_examples = epoch = valid_num = 0
     hist_valid_scores = []
     train_time = begin_time = time.time()
@@ -686,7 +687,7 @@ def train_mcmc_raml(args: Dict):
                         valid_samples.append((src_sent, sample.value))
 
             total_sample_num = len(valid_samples)
-            print(f'Num. samples={total_sample_num}', file=sys.stderr)
+            # print(f'Num. samples={total_sample_num}', file=sys.stderr)
             if total_sample_num == 0:
                 continue
 
@@ -707,7 +708,7 @@ def train_mcmc_raml(args: Dict):
             batch_losses_val = batch_loss.item()
             report_loss += batch_losses_val
             cum_loss += batch_losses_val
-
+            
             del loss, batch_loss
 
             tgt_words_num_to_predict = sum(len(s[1:]) for s in retained_tgt_sents)  # omitting leading `<s>`
@@ -715,18 +716,20 @@ def train_mcmc_raml(args: Dict):
             cum_tgt_words += tgt_words_num_to_predict
             report_examples += total_sample_num
             cum_examples += total_sample_num
+            report_total_samples += len(src_sents) * sample_size
 
             if train_iter % log_every == 0:
                 print('epoch %d, iter %d, avg. loss %.2f, avg. ppl %.2f ' \
-                      'cum. examples %d, speed %.2f words/sec, time elapsed %.2f sec' % (epoch, train_iter,
+                      'cum. examples %d, accept ratio %.2f, speed %.2f words/sec, time elapsed %.2f sec' % (epoch, train_iter,
                                                                                          report_loss / report_examples,
                                                                                          math.exp(report_loss / report_tgt_words),
                                                                                          cum_examples,
+                                                                                         report_examples / report_total_samples,
                                                                                          report_tgt_words / (time.time() - train_time),
                                                                                          time.time() - begin_time), file=sys.stderr)
 
                 train_time = time.time()
-                report_loss = report_tgt_words = report_examples = 0.
+                report_loss = report_tgt_words = report_examples = report_total_samples = 0.
 
             # perform validation
             if train_iter % valid_niter == 0:
