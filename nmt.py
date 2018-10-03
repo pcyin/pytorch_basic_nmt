@@ -390,9 +390,11 @@ class NMT(nn.Module):
         for src_sent_id in range(batch_size):
             for sample_id in range(sample_size):
                 offset = sample_id * batch_size + src_sent_id
-                hyp = Hypothesis(value=self.vocab.tgt.indices2words(_completed_samples[src_sent_id][sample_id])[:-1],
+                hyp = Hypothesis(value=self.vocab.tgt.indices2words(_completed_samples[src_sent_id][sample_id]),
                                  score=sample_scores[offset].item())
                 completed_samples[src_sent_id][sample_id] = hyp
+
+        del samples, sample_scores, p_t  # FIXME: is this necessary?
 
         return completed_samples
 
@@ -669,7 +671,9 @@ def train_mcmc_raml(args: Dict):
             optimizer.zero_grad()
 
             with torch.no_grad():
-                p_gold_ys = proposal_model(src_sents, tgt_sents).cpu().numpy()
+                p_gold_ys_tensor = proposal_model(src_sents, tgt_sents).cpu()
+                p_gold_ys = p_gold_ys_tensor.tolist()
+                del p_gold_ys_tensor
 
                 # generate samples
                 samples = proposal_model.sample(src_sents, sample_size=sample_size)
@@ -709,7 +713,7 @@ def train_mcmc_raml(args: Dict):
             report_loss += batch_losses_val
             cum_loss += batch_losses_val
             
-            del loss, batch_loss
+            del loss, batch_loss, example_losses
 
             tgt_words_num_to_predict = sum(len(s[1:]) for s in retained_tgt_sents)  # omitting leading `<s>`
             report_tgt_words += tgt_words_num_to_predict
