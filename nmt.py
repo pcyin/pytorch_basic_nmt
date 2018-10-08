@@ -623,6 +623,7 @@ def train_mcmc_raml(args: Dict):
     log_every = int(args['--log-every'])
     model_save_path = args['--save-to']
     sample_size = int(args['--sample-size'])
+    decode_max_time_step = int(args['--max-decoding-time-step'])
 
     vocab = pickle.load(open(args['--vocab'], 'rb'))
 
@@ -676,7 +677,7 @@ def train_mcmc_raml(args: Dict):
                 del p_gold_ys_tensor
 
                 # generate samples
-                samples = proposal_model.sample(src_sents, sample_size=sample_size)
+                samples = proposal_model.sample(src_sents, sample_size=sample_size, max_decoding_time_step=decode_max_time_step)
 
             valid_samples = []
             for src_sent_id, src_sent in enumerate(src_sents):
@@ -691,11 +692,11 @@ def train_mcmc_raml(args: Dict):
                         valid_samples.append((src_sent, sample.value))
 
             total_sample_num = len(valid_samples)
-            # print(f'Num. samples={total_sample_num}', file=sys.stderr)
             if total_sample_num == 0:
                 continue
 
             retained_src_sents, retained_tgt_sents = zip(*valid_samples)
+            print(f'Num. samples={total_sample_num}, max_src_len={max(len(src_sent) for src_sent in retained_src_sents)}, max_tgt_len={max(len(tgt_sent) for tgt_sent in retained_tgt_sents)}', file=sys.stderr)
 
             # (batch_size)
             example_losses = -model(retained_src_sents, retained_tgt_sents)
