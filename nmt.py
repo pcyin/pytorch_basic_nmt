@@ -37,6 +37,8 @@ Options:
     --valid-niter=<int>                     perform validation after how many iterations [default: 2000]
     --dropout=<float>                       dropout [default: 0.3]
     --max-decoding-time-step=<int>          maximum number of decoding time steps [default: 70]
+    --tau=<float>                           tau in RAML [default: 1.0]
+    --include-gold-target                   always include the gold-standard target in RAML
 """
 
 import math
@@ -623,6 +625,8 @@ def train_mcmc_raml(args: Dict):
     log_every = int(args['--log-every'])
     model_save_path = args['--save-to']
     sample_size = int(args['--sample-size'])
+    tau = float(args['--tau'])
+    include_gold_tgt = args['--include-gold-target']
 
     vocab = pickle.load(open(args['--vocab'], 'rb'))
 
@@ -662,6 +666,22 @@ def train_mcmc_raml(args: Dict):
     train_time = begin_time = time.time()
     print('begin MCMC RAML training')
 
+    recent_samples: Dict[str, Tuple[List, float, float]] = dict()
+    with torch.no_grad():
+        _batch_size = 128
+        for src_sents, tgt_sents in tqdm(batch_iter(train_data, batch_size=_batch_size),
+                                         total=len(train_data) // _batch_size,
+                                         desc='computing p_y*'):
+            p_gold_ys = proposal_model(src_sents, tgt_sents).cpu().tolist()
+            for i in range(len(src_sents)):
+                src_sent = ' '.join(src_sents[i])
+                tgt_sent = tgt_sents[i]
+                p_gold_y = p_gold_ys[i]
+
+                recent_samples[src_sent] = (tgt_sent, p_gold_y, 1.0)
+
+            del p_gold_ys
+
     while True:
         epoch += 1
 
@@ -671,24 +691,25 @@ def train_mcmc_raml(args: Dict):
             optimizer.zero_grad()
 
             with torch.no_grad():
-                p_gold_ys_tensor = proposal_model(src_sents, tgt_sents).cpu()
-                p_gold_ys = p_gold_ys_tensor.tolist()
-                del p_gold_ys_tensor
-
                 # generate samples
                 samples = proposal_model.sample(src_sents, sample_size=sample_size)
 
             valid_samples = []
             for src_sent_id, src_sent in enumerate(src_sents):
                 tgt_sent = tgt_sents[src_sent_id][1:-1]
-                p_gold_y = p_gold_ys[src_sent_id]
+                src_sent_concate = ' '.join(src_sent)
+                sample_prev, sample_prev_prob, sample_prev_reward = recent_samples[src_sent_concate]
                 for sample_id in range(sample_size):
-                    sample = samples[src_sent_id][sample_id]
-                    r_i = raml_utils.get_reward(tgt_sent, sample.value)
+                    sample_i = samples[src_sent_id][sample_id]
+                    r_i = raml_utils.get_reward(tgt_sent, sample_i.value[1:-1])
 
-                    if raml_utils.mcmc_accept(p_gold_y, 1., sample.score, r_i, tau=1.):
-                    # if True:
-                        valid_samples.append((src_sent, sample.value))
+                    if raml_utils.mcmc_accept(sample_prev_prob, sample_prev_reward, sample_i.score, r_i, tau=tau):
+                        valid_samples.append((src_sent, sample_i.value))
+                        sample_prev = sample_i.value
+                        sample_prev_prob = sample_i.score
+                        sample_prev_reward = r_i
+
+                recent_samples[src_sent_concate] = (sample_prev, sample_prev_prob, sample_prev_reward)
 
             total_sample_num = len(valid_samples)
             # print(f'Num. samples={total_sample_num}', file=sys.stderr)
