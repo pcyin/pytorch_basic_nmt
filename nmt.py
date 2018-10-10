@@ -684,6 +684,7 @@ def train_mcmc_raml(args: Dict):
 
     while True:
         epoch += 1
+        real_sample_size = sample_size - 1 if include_gold_tgt else sample_size
 
         for src_sents, tgt_sents in batch_iter(train_data, batch_size=train_batch_size, shuffle=True):
             train_iter += 1
@@ -692,14 +693,20 @@ def train_mcmc_raml(args: Dict):
 
             with torch.no_grad():
                 # generate samples
-                samples = proposal_model.sample(src_sents, sample_size=sample_size)
+                samples = proposal_model.sample(src_sents,
+                                                sample_size=real_sample_size)
 
             valid_samples = []
+            total_sample_num = 0
             for src_sent_id, src_sent in enumerate(src_sents):
                 tgt_sent = tgt_sents[src_sent_id][1:-1]
                 src_sent_concate = ' '.join(src_sent)
                 sample_prev, sample_prev_prob, sample_prev_reward = recent_samples[src_sent_concate]
-                for sample_id in range(sample_size):
+
+                if include_gold_tgt:
+                    valid_samples.append((src_sent, tgt_sent))
+
+                for sample_id in range(real_sample_size):
                     sample_i = samples[src_sent_id][sample_id]
                     r_i = raml_utils.get_reward(tgt_sent, sample_i.value[1:-1])
 
@@ -709,9 +716,10 @@ def train_mcmc_raml(args: Dict):
                         sample_prev_prob = sample_i.score
                         sample_prev_reward = r_i
 
+                        total_sample_num += 1
+
                 recent_samples[src_sent_concate] = (sample_prev, sample_prev_prob, sample_prev_reward)
 
-            total_sample_num = len(valid_samples)
             # print(f'Num. samples={total_sample_num}', file=sys.stderr)
             if total_sample_num == 0:
                 continue
@@ -741,7 +749,7 @@ def train_mcmc_raml(args: Dict):
             cum_tgt_words += tgt_words_num_to_predict
             report_examples += total_sample_num
             cum_examples += total_sample_num
-            report_total_samples += len(src_sents) * sample_size
+            report_total_samples += len(src_sents) * real_sample_size
 
             if train_iter % log_every == 0:
                 print('epoch %d, iter %d, avg. loss %.2f, avg. ppl %.2f ' \
