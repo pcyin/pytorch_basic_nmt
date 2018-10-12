@@ -626,6 +626,7 @@ def train_mcmc_raml(args: Dict):
     log_every = int(args['--log-every'])
     model_save_path = args['--save-to']
     sample_size = int(args['--sample-size'])
+    decode_max_time_step = int(args['--max-decoding-time-step'])
     tau = float(args['--tau'])
     include_gold_tgt = args['--include-gold-target']
 
@@ -698,9 +699,10 @@ def train_mcmc_raml(args: Dict):
 
             with torch.no_grad():
                 # generate samples
-                samples = proposal_model.sample(src_sents,
+                samples = proposal_model.sample(src_sents, sample_size=sample_size, 
+                                                max_decoding_time_step=decode_max_time_step,
                                                 sample_size=real_sample_size)
-
+                
             valid_samples = []
             total_sample_num = 0
             for src_sent_id, src_sent in enumerate(src_sents):
@@ -745,6 +747,7 @@ def train_mcmc_raml(args: Dict):
                 continue
 
             retained_src_sents, retained_tgt_sents = zip(*valid_samples)
+            # print(f'Num. samples={total_sample_num}, max_src_len={max(len(src_sent) for src_sent in retained_src_sents)}, max_tgt_len={max(len(tgt_sent) for tgt_sent in retained_tgt_sents)}', file=sys.stderr)
 
             # (batch_size)
             example_losses = -model(retained_src_sents, retained_tgt_sents)
