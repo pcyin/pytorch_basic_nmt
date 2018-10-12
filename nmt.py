@@ -39,6 +39,7 @@ Options:
     --max-decoding-time-step=<int>          maximum number of decoding time steps [default: 70]
     --tau=<float>                           tau in RAML [default: 1.0]
     --include-gold-target                   always include the gold-standard target in RAML
+    --sample-log=<file>                     path to store sample log [default: None]
 """
 
 import math
@@ -628,6 +629,10 @@ def train_mcmc_raml(args: Dict):
     tau = float(args['--tau'])
     include_gold_tgt = args['--include-gold-target']
 
+    f_sample_log = None
+    if args['--sample-log'] != 'None':
+        f_sample_log = open(args['--sample-log'], 'w')
+
     vocab = pickle.load(open(args['--vocab'], 'rb'))
 
     print(f"load proposal model from {args['--proposal-model']}", file=sys.stderr)
@@ -706,11 +711,26 @@ def train_mcmc_raml(args: Dict):
                 if include_gold_tgt:
                     valid_samples.append((src_sent, tgt_sent))
 
+                if f_sample_log:
+                    print(f'*' * 20, file=f_sample_log)
+                    print(f'Source: {src_sent_concate}', file=f_sample_log)
+                    print(f"y*: {' '.join(tgt_sent)}", file=f_sample_log)
+                    print('', file=f_sample_log)
+
                 for sample_id in range(real_sample_size):
                     sample_i = samples[src_sent_id][sample_id]
+                    p_sample = sample_i.score
                     r_i = raml_utils.get_reward(tgt_sent, sample_i.value[1:-1])
 
-                    if raml_utils.mcmc_accept(sample_prev_prob, sample_prev_reward, sample_i.score, r_i, tau=tau):
+                    acc_rate = math.exp(r_i / tau - sample_prev_reward / tau + sample_prev_prob - p_sample)
+                    accepted_sample = np.random.uniform(0, 1) <= acc_rate
+
+                    if f_sample_log:
+                        print(f"y_s{sample_id}: {' '.join(sample_i.value)} "
+                              f"\t p(y)={p_sample:.2}, f(y)={r_i:.2}, p(y_tm1)={sample_prev_prob:.2}, f(y_tm1)={sample_prev_reward:.2}, acc_rate={acc_rate:.2} "
+                              f"\t {'accepted' if accepted_sample else 'rejected'}" , file=f_sample_log)
+
+                    if accepted_sample:
                         valid_samples.append((src_sent, sample_i.value))
                         sample_prev = sample_i.value
                         sample_prev_prob = sample_i.score
