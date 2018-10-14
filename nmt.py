@@ -23,6 +23,7 @@ Options:
     --embed-size=<int>                      embedding size [default: 256]
     --hidden-size=<int>                     hidden size [default: 256]
     --clip-grad=<float>                     gradient clipping [default: 5.0]
+    --label-smoothing=<float>                  use label smoothing [default: 0.0]
     --log-every=<int>                       log every [default: 10]
     --max-epoch=<int>                       max epoch [default: 30]
     --input-feed                            use input feeding
@@ -58,7 +59,7 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 
 import raml_utils
-from utils import read_corpus, batch_iter
+from utils import read_corpus, batch_iter, LabelSmoothingLoss
 from vocab import Vocab, VocabEntry
 
 
@@ -67,7 +68,7 @@ Hypothesis = namedtuple('Hypothesis', ['value', 'score'])
 
 class NMT(nn.Module):
 
-    def __init__(self, embed_size, hidden_size, vocab, dropout_rate=0.2, input_feed=True):
+    def __init__(self, embed_size, hidden_size, vocab, dropout_rate=0.2, input_feed=True, label_smoothing=0.):
         super(NMT, self).__init__()
 
         self.embed_size = embed_size
@@ -100,6 +101,11 @@ class NMT(nn.Module):
         # initialize the decoder's state and cells with encoder hidden states
         self.decoder_cell_init = nn.Linear(hidden_size * 2, hidden_size)
 
+        self.label_smoothing = label_smoothing
+        if label_smoothing > 0.:
+            self.label_smoothing_loss = LabelSmoothingLoss(label_smoothing,
+                                                           tgt_vocab_size=len(vocab.tgt), padding_idx=vocab.tgt['<pad>'])
+
     @property
     def device(self) -> torch.device:
         return self.src_embed.weight.device
@@ -121,11 +127,16 @@ class NMT(nn.Module):
         # (tgt_sent_len - 1, batch_size, tgt_vocab_size)
         tgt_words_log_prob = F.log_softmax(self.readout(att_vecs), dim=-1)
 
-        # (tgt_sent_len, batch_size)
-        tgt_words_mask = (tgt_sents_var != self.vocab.tgt['<pad>']).float()
+        if self.label_smoothing:
+            # (tgt_sent_len - 1, batch_size)
+            tgt_gold_words_log_prob = self.label_smoothing_loss(tgt_words_log_prob.view(-1, tgt_words_log_prob.size(-1)),
+                                                                tgt_sents_var[1:].view(-1)).view(-1, len(tgt_sents))
+        else:
+            # (tgt_sent_len, batch_size)
+            tgt_words_mask = (tgt_sents_var != self.vocab.tgt['<pad>']).float()
 
-        # (tgt_sent_len - 1, batch_size)
-        tgt_gold_words_log_prob = torch.gather(tgt_words_log_prob, index=tgt_sents_var[1:].unsqueeze(-1), dim=-1).squeeze(-1) * tgt_words_mask[1:]
+            # (tgt_sent_len - 1, batch_size)
+            tgt_gold_words_log_prob = torch.gather(tgt_words_log_prob, index=tgt_sents_var[1:].unsqueeze(-1), dim=-1).squeeze(-1) * tgt_words_mask[1:]
 
         # (batch_size)
         scores = tgt_gold_words_log_prob.sum(dim=0)
@@ -409,7 +420,8 @@ class NMT(nn.Module):
         print('save model parameters to [%s]' % path, file=sys.stderr)
 
         params = {
-            'args': dict(embed_size=self.embed_size, hidden_size=self.hidden_size, dropout_rate=self.dropout_rate, input_feed=self.input_feed),
+            'args': dict(embed_size=self.embed_size, hidden_size=self.hidden_size, dropout_rate=self.dropout_rate,
+                         input_feed=self.input_feed, label_smoothing=self.label_smoothing),
             'vocab': self.vocab,
             'state_dict': self.state_dict()
         }
@@ -472,6 +484,7 @@ def train(args: Dict):
                 hidden_size=int(args['--hidden-size']),
                 dropout_rate=float(args['--dropout']),
                 input_feed=args['--input-feed'],
+                label_smoothing=float(args['--label-smoothing']),
                 vocab=vocab)
     model.train()
 
