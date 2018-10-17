@@ -478,7 +478,7 @@ def train(args: Dict):
     log_every = int(args['--log-every'])
     model_save_path = args['--save-to']
 
-    vocab = pickle.load(open(args['--vocab'], 'rb'))
+    vocab = Vocab.load(args['--vocab'])
 
     model = NMT(embed_size=int(args['--embed-size']),
                 hidden_size=int(args['--hidden-size']),

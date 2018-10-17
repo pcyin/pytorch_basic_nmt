@@ -15,20 +15,24 @@ from typing import List
 from collections import Counter
 from itertools import chain
 from docopt import docopt
-import pickle
+import json
 import torch
 
 from utils import read_corpus, input_transpose
 
 
 class VocabEntry(object):
-    def __init__(self):
-        self.word2id = dict()
-        self.unk_id = 3
-        self.word2id['<pad>'] = 0
-        self.word2id['<s>'] = 1
-        self.word2id['</s>'] = 2
-        self.word2id['<unk>'] = 3
+    def __init__(self, word2id=None):
+        if word2id:
+            self.word2id = word2id
+        else:
+            self.word2id = dict()
+            self.word2id['<pad>'] = 0
+            self.word2id['<s>'] = 1
+            self.word2id['</s>'] = 2
+            self.word2id['<unk>'] = 3
+
+        self.unk_id = self.word2id['<unk>']
 
         self.id2word = {v: k for k, v in self.word2id.items()}
 
@@ -91,14 +95,32 @@ class VocabEntry(object):
 
 
 class Vocab(object):
-    def __init__(self, src_sents, tgt_sents, vocab_size, freq_cutoff):
+    def __init__(self, src_vocab: VocabEntry, tgt_vocab: VocabEntry):
+        self.src = src_vocab
+        self.tgt = tgt_vocab
+
+    @staticmethod
+    def build(src_sents, tgt_sents, vocab_size, freq_cutoff) -> 'Vocab':
         assert len(src_sents) == len(tgt_sents)
 
         print('initialize source vocabulary ..')
-        self.src = VocabEntry.from_corpus(src_sents, vocab_size, freq_cutoff)
+        src = VocabEntry.from_corpus(src_sents, vocab_size, freq_cutoff)
 
         print('initialize target vocabulary ..')
-        self.tgt = VocabEntry.from_corpus(tgt_sents, vocab_size, freq_cutoff)
+        tgt = VocabEntry.from_corpus(tgt_sents, vocab_size, freq_cutoff)
+
+        return Vocab(src, tgt)
+
+    def save(self, file_path):
+        json.dump(dict(src_word2id=self.src.word2id, tgt_word2id=self.tgt.word2id), open(file_path, 'w'), indent=2)
+
+    @staticmethod
+    def load(file_path):
+        entry = json.load(open(file_path, 'r'))
+        src_word2id = entry['src_word2id']
+        tgt_word2id = entry['tgt_word2id']
+
+        return Vocab(VocabEntry(src_word2id), VocabEntry(tgt_word2id))
 
     def __repr__(self):
         return 'Vocab(source %d words, target %d words)' % (len(self.src), len(self.tgt))
@@ -113,8 +135,8 @@ if __name__ == '__main__':
     src_sents = read_corpus(args['--train-src'], source='src')
     tgt_sents = read_corpus(args['--train-tgt'], source='tgt')
 
-    vocab = Vocab(src_sents, tgt_sents, int(args['--size']), int(args['--freq-cutoff']))
+    vocab = Vocab.build(src_sents, tgt_sents, int(args['--size']), int(args['--freq-cutoff']))
     print('generated vocabulary, source %d words, target %d words' % (len(vocab.src), len(vocab.tgt)))
 
-    pickle.dump(vocab, open(args['VOCAB_FILE'], 'wb'))
+    vocab.save(args['VOCAB_FILE'])
     print('vocabulary saved to %s' % args['VOCAB_FILE'])
