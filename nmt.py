@@ -144,11 +144,11 @@ class NMT(nn.Module):
         return scores
 
     def get_attention_mask(self, src_encodings: torch.Tensor, src_sents_len: List[int]) -> torch.Tensor:
-        src_sent_masks = torch.zeros(src_encodings.size(0), src_encodings.size(1), dtype=torch.float,
-                                     device=self.device)
+        src_sent_masks = torch.zeros(src_encodings.size(0), src_encodings.size(1), dtype=torch.float)
         for e_id, src_len in enumerate(src_sents_len):
             src_sent_masks[e_id, src_len:] = 1
-        return src_sent_masks
+
+        return src_sent_masks.to(self.device)
 
     def encode(self, src_sents_var: torch.Tensor, src_sent_lens: List[int]) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         # (src_sent_len, batch_size, embed_size)
