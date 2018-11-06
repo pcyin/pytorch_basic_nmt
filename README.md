@@ -9,7 +9,7 @@ With 256-dimensional LSTM hidden size, it achieves 28.13 BLEU score on the IWSLT
 
 ### Example Dataset
 
-We provide a preprocessed version of the IWSLT 2014 German-English translation task used in (Ranzato et al., 2015).
+We provide a preprocessed version of the IWSLT 2014 German-English translation task used in (Ranzato et al., 2015) [[script]](https://github.com/harvardnlp/BSO/blob/master/data_prep/MT/prepareData.sh). To download the dataset:
 
 ```bash
 wget http://www.cs.cmu.edu/~pengchey/iwslt2014_ende.zip
@@ -21,7 +21,7 @@ The dataset has 150K German-English training sentences. The `data/` folder conta
 
 ### Environment
 
-The (pseudo-) template code is written in Python 3.6 using some supporting third-party libraries. We provided a conda environment to install Python 3.6 with required libraries. Simply run
+The code is written in Python 3.6 using some supporting third-party libraries. We provided a conda environment to install Python 3.6 with required libraries. Simply run
 
 ```bash
 conda env create -f environment.yml
