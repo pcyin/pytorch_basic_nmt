@@ -1,10 +1,8 @@
 #!/bin/sh
 
-vocab="data/vocab.bin"
+vocab="data/vocab.json"
 train_src="data/train.de-en.de.wmixerprep"
 train_tgt="data/train.de-en.en.wmixerprep"
-# train_src="data/valid.de-en.de"
-# train_tgt="data/valid.de-en.en"
 dev_src="data/valid.de-en.de"
 dev_tgt="data/valid.de-en.en"
 test_src="data/test.de-en.de"
@@ -23,14 +21,16 @@ python nmt.py \
     --train-tgt ${train_tgt} \
     --dev-src ${dev_src} \
     --dev-tgt ${dev_tgt} \
-    --save-to ${work_dir}/model.bin \
+    --input-feed \
     --valid-niter 2400 \
     --batch-size 64 \
     --hidden-size 256 \
     --embed-size 256 \
     --uniform-init 0.1 \
+    --label-smoothing 0.1 \
     --dropout 0.2 \
     --clip-grad 5.0 \
+    --save-to ${work_dir}/model.bin \
     --lr-decay 0.5 2>${work_dir}/err.log
 
 python nmt.py \
@@ -42,4 +42,4 @@ python nmt.py \
     ${test_src} \
     ${work_dir}/decode.txt
 
-perl multi-bleu.perl ${test_tgt} < ${work_dir}/decode.txt
+perl multi-bleu.perl ${test_tgt} < ${work_dir}/decode.txt >>${work_dir}/err.log
