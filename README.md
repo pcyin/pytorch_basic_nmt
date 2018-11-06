@@ -1,4 +1,7 @@
-This is a basic implementation of attentional neural machine translation (Luong et al., 2015) in Pytorch.
+## A Basic PyTorch Implementation of Attentional Neural Machine Translation
+
+This is a basic implementation of attentional neural machine translation (Bahdanau et al., 2015, Luong et al., 2015) in Pytorch 0.4.
+It implements the model described in [Luong et al., 2015](https://arxiv.org/abs/1508.04025), and supports label smoothing, beam-search decoding and random sampling.
 With 256-dimensional LSTM hidden size, it achieves 28.13 BLEU score on the IWSLT 2014 Germen-English dataset (Ranzato et al., 2015).
 
 ### File Structure
