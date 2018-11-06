@@ -77,6 +77,8 @@ class NMT(nn.Module):
         self.vocab = vocab
         self.input_feed = input_feed
 
+        # initialize neural network layers...
+
         self.src_embed = nn.Embedding(len(vocab.src), embed_size, padding_idx=vocab.src['<pad>'])
         self.tgt_embed = nn.Embedding(len(vocab.tgt), embed_size, padding_idx=vocab.tgt['<pad>'])
 
@@ -111,6 +113,20 @@ class NMT(nn.Module):
         return self.src_embed.weight.device
 
     def forward(self, src_sents: List[List[str]], tgt_sents: List[List[str]]) -> torch.Tensor:
+        """
+        take a mini-batch of source and target sentences, compute the log-likelihood of
+        target sentences.
+
+        Args:
+            src_sents: list of source sentence tokens
+            tgt_sents: list of target sentence tokens, wrapped by `<s>` and `</s>`
+
+        Returns:
+            scores: a variable/tensor of shape (batch_size, ) representing the
+                log-likelihood of generating the gold-standard target sentence for
+                each example in the input batch
+        """
+
         # (src_sent_len, batch_size)
         src_sents_var = self.vocab.src.to_input_tensor(src_sents, device=self.device)
         # (tgt_sent_len, batch_size)
@@ -151,6 +167,18 @@ class NMT(nn.Module):
         return src_sent_masks.to(self.device)
 
     def encode(self, src_sents_var: torch.Tensor, src_sent_lens: List[int]) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Use a GRU/LSTM to encode source sentences into hidden states
+
+        Args:
+            src_sents: list of source sentence tokens
+
+        Returns:
+            src_encodings: hidden states of tokens in source sentences, this could be a variable
+                with shape (batch_size, source_sentence_length, encoding_dim), or in orther formats
+            decoder_init_state: decoder GRU/LSTM's initial state, computed from source encodings
+        """
+
         # (src_sent_len, batch_size, embed_size)
         src_word_embeds = self.src_embed(src_sents_var)
         packed_src_embed = pack_padded_sequence(src_word_embeds, src_sent_lens)
@@ -169,6 +197,21 @@ class NMT(nn.Module):
 
     def decode(self, src_encodings: torch.Tensor, src_sent_masks: torch.Tensor,
                decoder_init_vec: Tuple[torch.Tensor, torch.Tensor], tgt_sents_var: torch.Tensor) -> torch.Tensor:
+        """
+        Given source encodings, compute the log-likelihood of predicting the gold-standard target
+        sentence tokens
+
+        Args:
+            src_encodings: hidden states of tokens in source sentences
+            decoder_init_state: decoder GRU/LSTM's initial state
+            tgt_sents: list of gold-standard target sentences, wrapped by `<s>` and `</s>`
+
+        Returns:
+            scores: could be a variable of shape (batch_size, ) representing the
+                log-likelihood of generating the gold-standard target sentence for
+                each example in the input batch
+        """
+
         # (batch_size, src_sent_len, hidden_size)
         src_encoding_att_linear = self.att_src_linear(src_encodings)
 
@@ -238,6 +281,20 @@ class NMT(nn.Module):
         return ctx_vec, softmaxed_att_weight
 
     def beam_search(self, src_sent: List[str], beam_size: int=5, max_decoding_time_step: int=70) -> List[Hypothesis]:
+        """
+        Given a single source sentence, perform beam search
+
+        Args:
+            src_sent: a single tokenized source sentence
+            beam_size: beam size
+            max_decoding_time_step: maximum number of time steps to unroll the decoding RNN
+
+        Returns:
+            hypotheses: a list of hypothesis, each hypothesis has two fields:
+                value: List[str]: the decoded target sentence, represented as a list of words
+                score: float: the log-likelihood of the target sentence
+        """
+
         src_sents_var = self.vocab.src.to_input_tensor([src_sent], self.device)
 
         src_encodings, dec_init_vec = self.encode(src_sents_var, [len(src_sent)])
@@ -430,11 +487,27 @@ class NMT(nn.Module):
 
 
 def evaluate_ppl(model, dev_data, batch_size=32):
+    """
+    Evaluate perplexity on dev sentences
+
+    Args:
+        dev_data: a list of dev sentences
+        batch_size: batch size
+
+    Returns:
+        ppl: the perplexity on dev sentences
+    """
+
     was_training = model.training
     model.eval()
 
     cum_loss = 0.
     cum_tgt_words = 0.
+
+    # you may want to wrap the following code using a context manager provided
+    # by the NN library to signal the backend to not to keep gradient information
+    # e.g., `torch.no_grad()`
+
     with torch.no_grad():
         for src_sents, tgt_sents in batch_iter(dev_data, batch_size):
             loss = -model(src_sents, tgt_sents).sum()
@@ -452,7 +525,17 @@ def evaluate_ppl(model, dev_data, batch_size=32):
 
 
 def compute_corpus_level_bleu_score(references: List[List[str]], hypotheses: List[Hypothesis]) -> float:
-    # compute BLEU
+    """
+    Given decoding results and reference sentences, compute corpus-level BLEU score
+
+    Args:
+        references: a list of gold-standard reference target sentences
+        hypotheses: a list of hypotheses, one for each reference
+
+    Returns:
+        bleu_score: corpus-level BLEU score
+    """
+
     if references[0][0] == '<s>':
         references = [ref[1:-1] for ref in references]
 
@@ -741,7 +824,13 @@ def train_mcmc_raml(args: Dict):
                 train_time = time.time()
                 report_loss = report_tgt_words = report_examples = 0.
 
-            # perform validation
+            # the following code performs validation on dev set, and controls the learning schedule
+            # if the dev score is better than the last check point, then the current model is saved.
+            # otherwise, we allow for that performance degeneration for up to `--patience` times;
+            # if the dev score does not increase after `--patience` iterations, we reload the previously
+            # saved best model (and the state of the optimizer), halve the learning rate and continue
+            # training. This repeats for up to `--max-num-trial` times.
+
             if train_iter % valid_niter == 0:
                 print('epoch %d, iter %d, cum. loss %.2f, cum. ppl %.2f cum. examples %d' % (epoch, train_iter,
                                                                                          cum_loss / cum_examples,
@@ -780,7 +869,7 @@ def train_mcmc_raml(args: Dict):
                             print('early stop!', file=sys.stderr)
                             exit(0)
 
-                        # decay lr, and restore from previously best checkpoint
+                        # decay learning rate, and restore from previously best checkpoint
                         lr = optimizer.param_groups[0]['lr'] * float(args['--lr-decay'])
                         print('load previously best model and decay learning rate to %f' % lr, file=sys.stderr)
 
@@ -821,6 +910,12 @@ def beam_search(model: NMT, test_data_src: List[List[str]], beam_size: int, max_
 
 
 def decode(args: Dict[str, str]):
+    """
+    performs decoding on a test set, and save the best-scoring decoding results.
+    If the target gold-standard sentences are given, the function also computes
+    corpus-level BLEU score.
+    """
+
     print(f"load test source sentences from [{args['TEST_SOURCE_FILE']}]", file=sys.stderr)
     test_data_src = read_corpus(args['TEST_SOURCE_FILE'], source='src')
     if args['TEST_TARGET_FILE']:
@@ -852,7 +947,7 @@ def decode(args: Dict[str, str]):
 def main():
     args = docopt(__doc__)
 
-    # seed the RNG
+    # seed the random number generators
     seed = int(args['--seed'])
     torch.manual_seed(seed)
     if args['--cuda']:
