@@ -9,7 +9,15 @@ With 256-dimensional LSTM hidden size, it achieves 28.13 BLEU score on the IWSLT
 
 ### Example Dataset
 
-`data/` folder contains the IWSLT 2014 dataset has 150K German-English training sentences. The `data/` folder contains a copy of the public release of the dataset. Files with suffix `*.wmixerprep` are pre-processed versions of the dataset from Ranzato et al., 2015, with long sentences chopped and rared words replaced by a special `<unk>` token. You could use the pre-processed training files for training/developing (or come up with your own pre-processing strategy), but for testing you have to use the **original** version of testing files, ie., `test.de-en.(de|en)`.
+We provide a preprocessed version of the IWSLT 2014 German-English translation task used in (Ranzato et al., 2015).
+
+```bash
+wget http://www.cs.cmu.edu/~pengchey/iwslt2014_ende.zip
+unzip iwslt2014_ende.zip
+```
+
+Running the script will extract a`data/` folder which contains the IWSLT 2014 dataset.
+The dataset has 150K German-English training sentences. The `data/` folder contains a copy of the public release of the dataset. Files with suffix `*.wmixerprep` are pre-processed versions of the dataset from Ranzato et al., 2015, with long sentences chopped and rared words replaced by a special `<unk>` token. You could use the pre-processed training files for training/developing (or come up with your own pre-processing strategy), but for testing you have to use the **original** version of testing files, ie., `test.de-en.(de|en)`.
 
 ### Environment
 
@@ -20,6 +28,9 @@ conda env create -f environment.yml
 ```
 
 ### Usage
+
+Each runnable script (`nmt.py`, `vocab.py`) is annotated using `dotopt`.
+Please refer to the source file for complete usage.
 
 First, we extract a vocabulary file from the training data using the command:
 
