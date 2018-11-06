@@ -1,4 +1,5 @@
 This is a basic implementation of attentional neural machine translation (Luong et al., 2015) in Pytorch.
+With 256-dimensional LSTM hidden size, it achieves 28.13 BLEU score on the IWSLT 2014 Germen-English dataset (Ranzato et al., 2015).
 
 ### File Structure
 

@@ -377,7 +377,21 @@ class NMT(nn.Module):
 
         return completed_hypotheses
 
-    def sample(self, src_sents: List[List[str]], sample_size=5, max_decoding_time_step=100):
+    def sample(self, src_sents: List[List[str]], sample_size=5, max_decoding_time_step=100) -> List[Hypothesis]:
+        """
+        Given a batched list of source sentences, randomly sample hypotheses from the model distribution p(y|x)
+
+        Args:
+            src_sents: a list of batched source sentences
+            sample_size: sample size for each source sentence in the batch
+            max_decoding_time_step: maximum number of time steps to unroll the decoding RNN
+
+        Returns:
+            hypotheses: a list of hypothesis, each hypothesis has two fields:
+                value: List[str]: the decoded target sentence, represented as a list of words
+                score: float: the log-likelihood of the target sentence
+        """
+
         src_sents_var = self.vocab.src.to_input_tensor(src_sents, self.device)
 
         src_encodings, dec_init_vec = self.encode(src_sents_var, [len(sent) for sent in src_sents])
