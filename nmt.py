@@ -259,7 +259,7 @@ class NMT(nn.Module):
         att_t = torch.tanh(self.att_vec_linear(torch.cat([h_t, ctx_t], 1)))  # E.q. (5)
         att_t = self.dropout(att_t)
 
-        return (cell_t, h_t), att_t, alpha_t
+        return (h_t, cell_t), att_t, alpha_t
 
     def dot_prod_attention(self, h_t: torch.Tensor, src_encoding: torch.Tensor, src_encoding_att_linear: torch.Tensor,
                            mask: torch.Tensor=None) -> Tuple[torch.Tensor, torch.Tensor]:
