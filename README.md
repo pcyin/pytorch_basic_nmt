@@ -4,6 +4,8 @@ This is a basic implementation of attentional neural machine translation (Bahdan
 It implements the model described in [Luong et al., 2015](https://arxiv.org/abs/1508.04025), and supports label smoothing, beam-search decoding and random sampling.
 With 256-dimensional LSTM hidden size, it achieves 28.13 BLEU score on the IWSLT 2014 Germen-English dataset (Ranzato et al., 2015).
 
+This codebase is used for instructional purposes in Stanford [CS224N Nautral Language Processing with Deep Learning]( http://web.stanford.edu/class/cs224n/) and CMU [11-731 Machine Translation and Sequence-to-Sequence Models](http://www.phontron.com/class/mtandseq2seq2018/).
+
 ### File Structure
 
 * `nmt.py`: contains the neural machine translation model and training/testing code.
