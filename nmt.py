@@ -21,7 +21,7 @@ Options:
     --embed-size=<int>                      embedding size [default: 256]
     --hidden-size=<int>                     hidden size [default: 256]
     --clip-grad=<float>                     gradient clipping [default: 5.0]
-    --label-smoothing=<float>                  use label smoothing [default: 0.0]
+    --label-smoothing=<float>               use label smoothing [default: 0.0]
     --log-every=<int>                       log every [default: 10]
     --max-epoch=<int>                       max epoch [default: 30]
     --input-feed                            use input feeding
