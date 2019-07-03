@@ -51,3 +51,7 @@ The script also has options to control the cutoff frequency and the size of gene
 
 To start training and evaluation, simply run `data/train.sh`. 
 After training and decoding, we call the official evaluation script `multi-bleu.perl` to compute the corpus-level BLEU score of the decoding results against the gold-standard.
+
+### License
+
+This work is licensed under a Creative Commons Attribution 4.0 International License.
