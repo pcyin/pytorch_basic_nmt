@@ -6,6 +6,8 @@ With 256-dimensional LSTM hidden size, it achieves 28.13 BLEU score on the IWSLT
 
 This codebase is used for instructional purposes in Stanford [CS224N Nautral Language Processing with Deep Learning]( http://web.stanford.edu/class/cs224n/) and CMU [11-731 Machine Translation and Sequence-to-Sequence Models](http://www.phontron.com/class/mtandseq2seq2018/).
 
+**Note** This branch implements distributed training. `scripts/train.py` assumes you have two GPU cards. Refer to the training script for more details.
+
 ### File Structure
 
 * `nmt.py`: contains the neural machine translation model and training/testing code.

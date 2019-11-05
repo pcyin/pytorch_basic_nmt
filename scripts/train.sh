@@ -1,5 +1,3 @@
-#!/bin/sh
-
 vocab="data/vocab.json"
 train_src="data/train.de-en.de.wmixerprep"
 train_tgt="data/train.de-en.en.wmixerprep"
@@ -9,11 +7,11 @@ test_src="data/test.de-en.de"
 test_tgt="data/test.de-en.en"
 
 work_dir="work_dir"
-
 mkdir -p ${work_dir}
-echo save results to ${work_dir}
 
-python nmt.py \
+python -u -m torch.distributed.launch \
+    --nproc_per_node=2 \
+    nmt.py \
     train \
     --cuda \
     --vocab ${vocab} \
@@ -23,7 +21,7 @@ python nmt.py \
     --dev-tgt ${dev_tgt} \
     --input-feed \
     --valid-niter 2400 \
-    --batch-size 64 \
+    --batch-size 32 \
     --hidden-size 256 \
     --embed-size 256 \
     --uniform-init 0.1 \
@@ -31,7 +29,8 @@ python nmt.py \
     --dropout 0.2 \
     --clip-grad 5.0 \
     --save-to ${work_dir}/model.bin \
-    --lr-decay 0.5 2>${work_dir}/err.log
+    --lr-decay 0.5 \
+    --patience 5
 
 python nmt.py \
     decode \
